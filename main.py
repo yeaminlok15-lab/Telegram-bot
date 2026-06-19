@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,7 +11,7 @@ import aiosqlite
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━
 TOKEN = "8781653487:AAGiWE1CLZxAb8fJzTq28f3fMphds25qPKI"  # এখানে আপনার বটের টোকেন দিন
-ADMIN_ID = 8179643564  # এখানে আপনার টেলিগ্রাম আইডি দিন (যেমন: 8179643564)
+ADMIN_ID = 8781653487  # এখানে আপনার টেলিগ্রাম আইডি দিন (যেমন: 8179643564)
 DB_NAME = "premium_saas.db"
 
 # ━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,9 @@ class AdminState(StatesGroup):
 # DATABASE MODULE
 # ━━━━━━━━━━━━━━━━━━━━
 async def init_db():
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+        await db.execute('PRAGMA journal_mode=WAL;')
+        await db.execute('PRAGMA synchronous=NORMAL;')
         await db.executescript('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0, ref_by INTEGER
@@ -60,24 +62,28 @@ async def init_db():
         await db.commit()
 
 async def get_user(user_id):
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
             return await cursor.fetchone()
 
 async def add_user(user_id, ref_by=None):
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            if await cursor.fetchone(): return False
+            if await cursor.fetchone(): 
+                return False  # Old user, no points will be given
+
+        # Insert new user
         await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
         
-        # Referrer gets 5 points
+        # Give points to referrer safely
         if ref_by and str(ref_by) != str(user_id):
             await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
+            
         await db.commit()
         return True
 
 async def get_packages_with_stock():
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         query = '''
             SELECT p.id, p.name, p.points, COUNT(s.id) as stock_count
             FROM packages p
@@ -125,15 +131,21 @@ admin_router = Router()
 # USER HANDLERS
 # ━━━━━━━━━━━━━━━━━━━━
 @user_router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, bot: Bot):
+async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: CommandObject):
     await state.clear()
-    args = message.text.split()
-    ref_by = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    
+    # Safely extract referral ID
+    ref_by = None
+    if command.args and command.args.isdigit():
+        ref_by = int(command.args)
     
     is_new_user = await add_user(message.from_user.id, ref_by)
+    
     if is_new_user and ref_by and str(ref_by) != str(message.from_user.id):
-        try: await bot.send_message(chat_id=ref_by, text="🎉 *New Referral!*\nSomeone joined using your link. You earned *+5 Tokens!*", parse_mode="Markdown")
-        except Exception: pass 
+        try: 
+            await bot.send_message(chat_id=ref_by, text="🎉 *New Referral!*\nSomeone joined using your link. You earned *+5 Tokens!*", parse_mode="Markdown")
+        except Exception: 
+            pass 
 
     is_admin = message.from_user.id == ADMIN_ID
     text = "🟢 *Welcome to Premium SaaS*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below to begin."
@@ -188,7 +200,7 @@ async def process_purchase(call: CallbackQuery):
     pkg_id = int(call.data.split("_")[2])
     user_id = call.from_user.id
     
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT name, points FROM packages WHERE id = ?", (pkg_id,)) as cursor:
             pkg = await cursor.fetchone()
         if not pkg: return
@@ -208,7 +220,7 @@ async def process_purchase(call: CallbackQuery):
         
         if balance >= price:
             await db.execute("UPDATE users SET points = points - ? WHERE user_id = ?", (price, user_id))
-            await db.execute("DELETE FROM stock WHERE id = ?", (stock_id,)) # Auto Stock Out
+            await db.execute("DELETE FROM stock WHERE id = ?", (stock_id,)) 
             await db.execute("INSERT INTO orders (user_id, package_name, status) VALUES (?, ?, ?)", (user_id, pkg_name, "Completed"))
             await db.commit()
             
@@ -231,7 +243,7 @@ async def show_referral(message: Message, bot: Bot):
 
 @user_router.message(F.text == "📜 History")
 async def show_history(message: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT package_name, status FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 5", (message.from_user.id,)) as cursor:
             orders = await cursor.fetchall()
     if not orders: return await message.answer("🟢 *No history available.*", parse_mode="Markdown")
@@ -256,7 +268,7 @@ async def start_redeem(message: Message, state: FSMContext):
 async def process_redeem(message: Message, state: FSMContext):
     code = message.text.strip()
     is_admin = message.from_user.id == ADMIN_ID
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT amount, is_used FROM redeem_codes WHERE code = ?", (code,)) as cursor:
             res = await cursor.fetchone()
             if not res: await message.answer("🔴 *Invalid code.*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
@@ -279,7 +291,7 @@ async def admin_panel(message: Message):
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as c: users = (await c.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM orders") as c: orders = (await c.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM stock") as c: stocks = (await c.fetchone())[0]
@@ -317,7 +329,7 @@ async def admin_hidden_key(message: Message, state: FSMContext):
     price = data['price']
     hidden_key = message.text
     
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         cursor = await db.execute("INSERT INTO packages (name, duration, points) VALUES (?, ?, ?)", (name, "N/A", price))
         pkg_id = cursor.lastrowid
         
@@ -351,7 +363,7 @@ async def admin_add_stock_step2(call: CallbackQuery, state: FSMContext):
 async def admin_save_stock(message: Message, state: FSMContext):
     data = await state.get_data()
     pkg_id = data['stock_pkg_id']
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         await db.execute("INSERT INTO stock (package_id, data) VALUES (?, ?)", (pkg_id, message.text))
         await db.commit()
     await state.clear()
@@ -374,7 +386,7 @@ async def admin_code_name(message: Message, state: FSMContext):
 async def admin_code_amt(message: Message, state: FSMContext):
     if not message.text.isdigit(): return await message.answer("🔴 Numbers only.")
     data = await state.get_data()
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         await db.execute("INSERT INTO redeem_codes (code, amount, is_used) VALUES (?, ?, 0)", (data['code'], int(message.text)))
         await db.commit()
     await state.clear()
@@ -390,8 +402,10 @@ async def main():
     dp = Dispatcher()
     dp.include_router(user_router)
     dp.include_router(admin_router)
+    
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, polling_timeout=30)
 
 if __name__ == "__main__":
     asyncio.run(main())
+                                   
