@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -70,12 +72,10 @@ async def add_user(user_id, ref_by=None):
     async with aiosqlite.connect(DB_NAME, timeout=20) as db:
         async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
             if await cursor.fetchone(): 
-                return False  # Old user, no points will be given
+                return False  # Old user
 
-        # Insert new user
         await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
         
-        # Give points to referrer safely
         if ref_by and str(ref_by) != str(user_id):
             await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
             
@@ -134,7 +134,6 @@ admin_router = Router()
 async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: CommandObject):
     await state.clear()
     
-    # Safely extract referral ID
     ref_by = None
     if command.args and command.args.isdigit():
         ref_by = int(command.args)
@@ -393,11 +392,32 @@ async def admin_code_amt(message: Message, state: FSMContext):
     await message.answer(f"🟢 *Code created!*\n🎁 `{data['code']}` = {message.text} Tokens", parse_mode="Markdown")
 
 # ━━━━━━━━━━━━━━━━━━━━
+# DUMMY WEB SERVER (FOR RENDER)
+# ━━━━━━━━━━━━━━━━━━━━
+async def handle(request):
+    return web.Response(text="Bot is running perfectly on Render!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Dummy Web Server started on port {port}")
+
+# ━━━━━━━━━━━━━━━━━━━━
 # MAIN
 # ━━━━━━━━━━━━━━━━━━━━
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
+    
+    # Start web server for Render
+    await start_web_server()
+    
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
     dp.include_router(user_router)
@@ -408,4 +428,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                                   
+                      
