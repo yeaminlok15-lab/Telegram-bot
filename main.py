@@ -13,7 +13,7 @@ import aiosqlite
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━
 TOKEN = "8781653487:AAHyw27t9YlxpEV-_GqYGw9EhRIenqlUadM"  # আপনার বটের টোকেন দিন
-ADMIN_ID = 8179643564  # আপনার টেলিগ্রাম আইডি দিন
+ADMIN_ID = 8781653487  # আপনার টেলিগ্রাম আইডি দিন
 DB_NAME = "premium_saas.db"
 
 # ━━━━━━━━━━━━━━━━━━━━
@@ -78,12 +78,10 @@ async def add_user(user_id, ref_by=None):
         async with aiosqlite.connect(DB_NAME, timeout=20) as db:
             async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
                 if await cursor.fetchone(): 
-                    return False  # যদি পুরোনো ইউজার হয়, তবে False রিটার্ন করবে (পয়েন্ট পাবে না)
+                    return False  
 
-            # নতুন ইউজার হলে ডাটাবেসে সেভ হবে
             await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
             
-            # রেফার করা ব্যক্তিকে ৫ পয়েন্ট দেওয়া হবে
             if ref_by and str(ref_by) != str(user_id):
                 await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
             await db.commit()
@@ -108,7 +106,7 @@ async def get_packages_with_stock():
         return []
 
 # ━━━━━━━━━━━━━━━━━━━━
-# KEYBOARDS (Reply Keyboards - Bottom Buttons)
+# KEYBOARDS 
 # ━━━━━━━━━━━━━━━━━━━━
 def main_menu_kb(is_admin=False):
     kb = [
@@ -139,7 +137,7 @@ user_router = Router()
 admin_router = Router()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# GLOBAL BACK / CANCEL HANDLERS (Must be at the top)
+# GLOBAL BACK / CANCEL HANDLERS 
 # ━━━━━━━━━━━━━━━━━━━━
 @user_router.message(F.text == "🔙 Back to Home")
 async def back_to_main(message: Message, state: FSMContext):
@@ -187,9 +185,11 @@ async def show_profile(message: Message):
 @user_router.message(F.text == "👑 Owner")
 async def show_owner(message: Message):
     text = (
-        "buy more credit for inbox \n"
-        "WhatsApp: `01700513465`\n"
-        "Telegram: @jihadxx240"
+        "🔥 *Need More Credits?* 🔥\n"
+        "Want to purchase additional credits? Contact me anytime!\n"
+        "📞 WhatsApp: `01700513465`\n"
+        "✈️ Telegram: @jihadxx240\n"
+        "Fast response • Trusted service • Easy process"
     )
     await message.answer(text, parse_mode="Markdown")
 
@@ -281,9 +281,11 @@ async def start_redeem(message: Message, state: FSMContext):
     await state.set_state(RedeemState.waiting_for_code)
     text = (
         "🎁 *Enter your Redeem Code:*\n\n"
-        "buy more credit for inbox \n"
-        "WhatsApp: `01700513465`\n"
-        "Telegram: @jihadxx240\n\n"
+        "🔥 *Need More Credits?* 🔥\n"
+        "Want to purchase additional credits? Contact me anytime!\n"
+        "📞 WhatsApp: `01700513465`\n"
+        "✈️ Telegram: @jihadxx240\n"
+        "Fast response • Trusted service • Easy process\n\n"
         "_(Press Back to cancel)_"
     )
     await message.answer(text, reply_markup=cancel_kb(), parse_mode="Markdown")
@@ -311,12 +313,11 @@ async def process_redeem(message: Message, state: FSMContext):
         await state.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# ADMIN HANDLERS (CRASH-PROOF & REPLY KEYBOARD BASED)
+# ADMIN HANDLERS 
 # ━━━━━━━━━━━━━━━━━━━━
 @admin_router.message(F.text == "🛠 Admin Panel")
 async def admin_panel(message: Message):
     if message.from_user.id != ADMIN_ID: return
-    # এখন আর ইনলাইন বোতাম নয়, সরাসরি নিচের কিবোর্ডে অ্যাডমিন অপশন আসবে
     await message.answer("🛠 *Admin Control Panel*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below:", reply_markup=admin_panel_kb(), parse_mode="Markdown")
 
 @admin_router.message(F.text == "📊 System Stats")
@@ -349,7 +350,6 @@ async def admin_pkg_price(message: Message, state: FSMContext):
     if not message.text.isdigit(): return await message.answer("🔴 Numbers only. Please try again.")
     await state.update_data(price=int(message.text))
     await state.set_state(AdminState.waiting_for_hidden_key)
-    # একসাথে অনেকগুলো অ্যাড করার ইনস্ট্রাকশন
     text = (
         "📝 *Enter the Hidden Keys / Extensions:*\n"
         "_(Send multiple keys separated by entering a new line / pressing Enter)_"
@@ -363,7 +363,6 @@ async def admin_hidden_key(message: Message, state: FSMContext):
         name = data.get('name', 'Unknown')
         price = data.get('price', 0)
         
-        # Enter (Newline) দিয়ে একাধিক আইটেম আলাদা করে সেভ হবে
         hidden_keys = [key.strip() for key in message.text.split('\n') if key.strip()]
         
         async with aiosqlite.connect(DB_NAME, timeout=20) as db:
@@ -389,7 +388,6 @@ async def admin_select_stock(message: Message, state: FSMContext):
     if not packages:
         return await message.answer("🔴 Create a package first!", parse_mode="Markdown")
     
-    # প্যাকেজ সিলেক্ট করার জন্য ইনলাইন বোতাম
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for pkg in packages:
         kb.inline_keyboard.append([InlineKeyboardButton(text=f"📥 {pkg[1]}", callback_data=f"addstock_{pkg[0]}")])
@@ -404,7 +402,7 @@ async def admin_add_stock_step2(call: CallbackQuery, state: FSMContext):
         await state.update_data(stock_pkg_id=pkg_id)
         await state.set_state(AdminState.waiting_for_stock_data)
         
-        await call.message.delete() # প্যাকেজ লিস্ট রিমুভ করে দেবে
+        await call.message.delete()
         text = "📝 *Send the Hidden Keys / Extensions for this stock:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_"
         await call.message.answer(text, reply_markup=cancel_admin_kb(), parse_mode="Markdown")
         await call.answer()
@@ -458,7 +456,7 @@ async def admin_code_amt(message: Message, state: FSMContext):
         await state.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# DUMMY WEB SERVER (FOR RENDER TO NOT CRASH/SLEEP)
+# DUMMY WEB SERVER 
 # ━━━━━━━━━━━━━━━━━━━━
 async def handle(request):
     return web.Response(text="Bot is running perfectly without crashing!")
@@ -484,7 +482,6 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
     
-    # Start web server for Render
     await start_web_server()
     
     bot = Bot(token=TOKEN)
@@ -492,7 +489,6 @@ async def main():
     dp.include_router(user_router)
     dp.include_router(admin_router)
     
-    # Global error handler
     @dp.errors()
     async def global_error_handler(event, Exception):
         logging.critical(f"Critical error caught globally: {Exception}")
