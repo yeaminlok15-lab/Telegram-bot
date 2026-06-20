@@ -12,8 +12,8 @@ import aiosqlite
 # ━━━━━━━━━━━━━━━━━━━━
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━
-TOKEN = "8781653487:AAHyw27t9YlxpEV-_GqYGw9EhRIenqlUadM"  # আপনার বটের টোকেন
-ADMIN_ID = 8179643564  # আপনার টেলিগ্রাম আইডি
+TOKEN = "8781653487:AAHyw27t9YlxpEV-_GqYGw9EhRIenqlUadM"  # আপনার বটের টোকেন দিন
+ADMIN_ID = 8179643564  # আপনার টেলিগ্রাম আইডি দিন
 DB_NAME = "premium_saas.db"
 
 # ━━━━━━━━━━━━━━━━━━━━
@@ -78,9 +78,12 @@ async def add_user(user_id, ref_by=None):
         async with aiosqlite.connect(DB_NAME, timeout=20) as db:
             async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
                 if await cursor.fetchone(): 
-                    return False  
+                    return False  # যদি পুরোনো ইউজার হয়, তবে False রিটার্ন করবে (পয়েন্ট পাবে না)
 
+            # নতুন ইউজার হলে ডাটাবেসে সেভ হবে
             await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
+            
+            # রেফার করা ব্যক্তিকে ৫ পয়েন্ট দেওয়া হবে
             if ref_by and str(ref_by) != str(user_id):
                 await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
             await db.commit()
@@ -105,7 +108,7 @@ async def get_packages_with_stock():
         return []
 
 # ━━━━━━━━━━━━━━━━━━━━
-# KEYBOARDS
+# KEYBOARDS (Reply Keyboards - Bottom Buttons)
 # ━━━━━━━━━━━━━━━━━━━━
 def main_menu_kb(is_admin=False):
     kb = [
@@ -116,21 +119,18 @@ def main_menu_kb(is_admin=False):
     if is_admin: kb.append([KeyboardButton(text="🛠 Admin Panel")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+def admin_panel_kb():
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="➕ Add Package"), KeyboardButton(text="📥 Add More Stock")],
+        [KeyboardButton(text="🎁 Add Redeem Code"), KeyboardButton(text="📊 System Stats")],
+        [KeyboardButton(text="🔙 Back to Home")]
+    ], resize_keyboard=True)
+
 def cancel_kb():
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔙 Back to Home")]], resize_keyboard=True)
 
-def admin_panel_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Add Package", callback_data="admin_add_pkg")],
-        [InlineKeyboardButton(text="📥 Add More Stock", callback_data="admin_select_pkg_stock")],
-        [InlineKeyboardButton(text="🎁 Add Redeem Code", callback_data="admin_add_code")],
-        [InlineKeyboardButton(text="📊 System Stats", callback_data="admin_stats")]
-    ])
-
-def cancel_admin_inline():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Cancel Operation", callback_data="admin_cancel_fsm")]
-    ])
+def cancel_admin_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Cancel Operation")]], resize_keyboard=True)
 
 # ━━━━━━━━━━━━━━━━━━━━
 # ROUTERS
@@ -139,13 +139,18 @@ user_router = Router()
 admin_router = Router()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# GLOBAL BACK HANDLER
+# GLOBAL BACK / CANCEL HANDLERS (Must be at the top)
 # ━━━━━━━━━━━━━━━━━━━━
 @user_router.message(F.text == "🔙 Back to Home")
 async def back_to_main(message: Message, state: FSMContext):
     await state.clear() 
     is_admin = message.from_user.id == ADMIN_ID
     await message.answer("🏠 *Main Menu*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below:", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+
+@admin_router.message(F.text == "❌ Cancel Operation")
+async def admin_cancel_action(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🟢 *Action cancelled.*\n\n🛠 *Admin Control Panel*", reply_markup=admin_panel_kb(), parse_mode="Markdown")
 
 # ━━━━━━━━━━━━━━━━━━━━
 # USER HANDLERS
@@ -164,7 +169,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: Comm
             try: 
                 await bot.send_message(chat_id=ref_by, text="🎉 *New Referral!*\nSomeone joined using your link. You earned *+5 Tokens!*", parse_mode="Markdown")
             except Exception: 
-                pass # যদি রেফারের ইউজার বট ব্লক করে দেয়, তবুও ক্র্যাশ করবে না
+                pass
 
         is_admin = message.from_user.id == ADMIN_ID
         text = "🟢 *Welcome to Premium SaaS*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below to begin."
@@ -306,48 +311,50 @@ async def process_redeem(message: Message, state: FSMContext):
         await state.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# ADMIN HANDLERS (CRASH-PROOF)
+# ADMIN HANDLERS (CRASH-PROOF & REPLY KEYBOARD BASED)
 # ━━━━━━━━━━━━━━━━━━━━
 @admin_router.message(F.text == "🛠 Admin Panel")
 async def admin_panel(message: Message):
     if message.from_user.id != ADMIN_ID: return
-    await message.answer("🛠 *Admin Control Panel*\n━━━━━━━━━━━━━━━━━━━━", reply_markup=admin_panel_kb(), parse_mode="Markdown")
+    # এখন আর ইনলাইন বোতাম নয়, সরাসরি নিচের কিবোর্ডে অ্যাডমিন অপশন আসবে
+    await message.answer("🛠 *Admin Control Panel*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below:", reply_markup=admin_panel_kb(), parse_mode="Markdown")
 
-@admin_router.callback_query(F.data == "admin_stats")
-async def admin_stats(call: CallbackQuery):
-    if call.from_user.id != ADMIN_ID: return
+@admin_router.message(F.text == "📊 System Stats")
+async def admin_stats(message: Message):
+    if message.from_user.id != ADMIN_ID: return
     try:
         async with aiosqlite.connect(DB_NAME, timeout=20) as db:
             async with db.execute("SELECT COUNT(*) FROM users") as c: users = (await c.fetchone())[0]
             async with db.execute("SELECT COUNT(*) FROM orders") as c: orders = (await c.fetchone())[0]
             async with db.execute("SELECT COUNT(*) FROM stock") as c: stocks = (await c.fetchone())[0]
-        await call.message.edit_text(f"📊 *System Stats*\n━━━━━━━━━━━━━━━━━━━━\n👥 Total Users: {users}\n📦 Total Orders: {orders}\n📥 Unsold Stock: {stocks}", parse_mode="Markdown")
+        await message.answer(f"📊 *System Stats*\n━━━━━━━━━━━━━━━━━━━━\n👥 Total Users: {users}\n📦 Total Orders: {orders}\n📥 Unsold Stock: {stocks}", parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Stats Error: {e}")
 
-@admin_router.callback_query(F.data == "admin_cancel_fsm")
-async def admin_cancel_action(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("🟢 *Action cancelled.*", parse_mode="Markdown")
-
-@admin_router.callback_query(F.data == "admin_add_pkg")
-async def admin_add_pkg(call: CallbackQuery, state: FSMContext):
-    if call.from_user.id != ADMIN_ID: return
+# --- ADD PACKAGE ---
+@admin_router.message(F.text == "➕ Add Package")
+async def admin_add_pkg(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
     await state.set_state(AdminState.waiting_for_pkg_name)
-    await call.message.edit_text("📦 *Enter package name:*\n_(e.g., Netflix, Jihad)_", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    await message.answer("📦 *Enter package name:*\n_(e.g., Netflix, Jihad)_", reply_markup=cancel_admin_kb(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_pkg_name)
 async def admin_pkg_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
     await state.set_state(AdminState.waiting_for_pkg_price)
-    await message.answer("💰 *Enter package price in tokens (numbers only):*", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    await message.answer("💰 *Enter package price in tokens (numbers only):*", reply_markup=cancel_admin_kb(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_pkg_price)
 async def admin_pkg_price(message: Message, state: FSMContext):
     if not message.text.isdigit(): return await message.answer("🔴 Numbers only. Please try again.")
     await state.update_data(price=int(message.text))
     await state.set_state(AdminState.waiting_for_hidden_key)
-    await message.answer("📝 *Enter the Hidden Keys / Extensions:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    # একসাথে অনেকগুলো অ্যাড করার ইনস্ট্রাকশন
+    text = (
+        "📝 *Enter the Hidden Keys / Extensions:*\n"
+        "_(Send multiple keys separated by entering a new line / pressing Enter)_"
+    )
+    await message.answer(text, reply_markup=cancel_admin_kb(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_hidden_key)
 async def admin_hidden_key(message: Message, state: FSMContext):
@@ -356,6 +363,7 @@ async def admin_hidden_key(message: Message, state: FSMContext):
         name = data.get('name', 'Unknown')
         price = data.get('price', 0)
         
+        # Enter (Newline) দিয়ে একাধিক আইটেম আলাদা করে সেভ হবে
         hidden_keys = [key.strip() for key in message.text.split('\n') if key.strip()]
         
         async with aiosqlite.connect(DB_NAME, timeout=20) as db:
@@ -367,23 +375,27 @@ async def admin_hidden_key(message: Message, state: FSMContext):
             await db.commit()
             
         await state.clear()
-        await message.answer(f"🟢 *Package Created & Stock Added!*\n\n📦 Name: {name}\n💰 Price: {price}\n✅ {len(hidden_keys)} Hidden Key(s) added successfully.", parse_mode="Markdown")
+        await message.answer(f"🟢 *Package Created & Stock Added!*\n\n📦 Name: {name}\n💰 Price: {price}\n✅ {len(hidden_keys)} Hidden Key(s) added successfully.", reply_markup=admin_panel_kb(), parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Add Package Error: {e}")
         await state.clear()
-        await message.answer("🔴 Server Error while saving package.")
+        await message.answer("🔴 Server Error while saving package.", reply_markup=admin_panel_kb())
 
-@admin_router.callback_query(F.data == "admin_select_pkg_stock")
-async def admin_select_stock(call: CallbackQuery, state: FSMContext):
-    if call.from_user.id != ADMIN_ID: return
+# --- ADD MORE STOCK TO EXISTING PACKAGE ---
+@admin_router.message(F.text == "📥 Add More Stock")
+async def admin_select_stock(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
     packages = await get_packages_with_stock()
     if not packages:
-        return await call.answer("🔴 Create a package first!", show_alert=True)
+        return await message.answer("🔴 Create a package first!", parse_mode="Markdown")
+    
+    # প্যাকেজ সিলেক্ট করার জন্য ইনলাইন বোতাম
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for pkg in packages:
         kb.inline_keyboard.append([InlineKeyboardButton(text=f"📥 {pkg[1]}", callback_data=f"addstock_{pkg[0]}")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="❌ Cancel", callback_data="admin_cancel_fsm")])
-    await call.message.edit_text("📦 *Select a package to add extra stock to:*", reply_markup=kb, parse_mode="Markdown")
+        
+    await message.answer("Please select a package below:", reply_markup=cancel_admin_kb())
+    await message.answer("📦 *Select Package:*", reply_markup=kb, parse_mode="Markdown")
 
 @admin_router.callback_query(F.data.startswith("addstock_"))
 async def admin_add_stock_step2(call: CallbackQuery, state: FSMContext):
@@ -391,7 +403,11 @@ async def admin_add_stock_step2(call: CallbackQuery, state: FSMContext):
         pkg_id = int(call.data.split("_")[1])
         await state.update_data(stock_pkg_id=pkg_id)
         await state.set_state(AdminState.waiting_for_stock_data)
-        await call.message.edit_text("📝 *Send the Hidden Keys / Extensions for this stock:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+        
+        await call.message.delete() # প্যাকেজ লিস্ট রিমুভ করে দেবে
+        text = "📝 *Send the Hidden Keys / Extensions for this stock:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_"
+        await call.message.answer(text, reply_markup=cancel_admin_kb(), parse_mode="Markdown")
+        await call.answer()
     except Exception as e:
         logging.error(f"Add Stock Step 2 Error: {e}")
 
@@ -409,22 +425,23 @@ async def admin_save_stock(message: Message, state: FSMContext):
             await db.commit()
             
         await state.clear()
-        await message.answer(f"🟢 *{len(hidden_keys)} Extra Stock(s) added successfully!*", parse_mode="Markdown")
+        await message.answer(f"🟢 *{len(hidden_keys)} Extra Stock(s) added successfully!*", reply_markup=admin_panel_kb(), parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Save Stock Error: {e}")
         await state.clear()
 
-@admin_router.callback_query(F.data == "admin_add_code")
-async def admin_add_code(call: CallbackQuery, state: FSMContext):
-    if call.from_user.id != ADMIN_ID: return
+# --- ADD REDEEM CODE ---
+@admin_router.message(F.text == "🎁 Add Redeem Code")
+async def admin_add_code(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
     await state.set_state(AdminState.waiting_for_redeem_code)
-    await call.message.edit_text("🎁 *Send redeem code name:*", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    await message.answer("🎁 *Send redeem code name:*", reply_markup=cancel_admin_kb(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_redeem_code)
 async def admin_code_name(message: Message, state: FSMContext):
     await state.update_data(code=message.text)
     await state.set_state(AdminState.waiting_for_redeem_amount)
-    await message.answer("💰 *Enter token amount:*", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    await message.answer("💰 *Enter token amount:*", reply_markup=cancel_admin_kb(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_redeem_amount)
 async def admin_code_amt(message: Message, state: FSMContext):
@@ -435,7 +452,7 @@ async def admin_code_amt(message: Message, state: FSMContext):
             await db.execute("INSERT INTO redeem_codes (code, amount, is_used) VALUES (?, ?, 0)", (data['code'], int(message.text)))
             await db.commit()
         await state.clear()
-        await message.answer(f"🟢 *Code created!*\n🎁 `{data['code']}` = {message.text} Tokens", parse_mode="Markdown")
+        await message.answer(f"🟢 *Code created!*\n🎁 `{data['code']}` = {message.text} Tokens", reply_markup=admin_panel_kb(), parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Create Code Error: {e}")
         await state.clear()
@@ -475,14 +492,13 @@ async def main():
     dp.include_router(user_router)
     dp.include_router(admin_router)
     
-    # Handle all unhandled exceptions globally to prevent crash
+    # Global error handler
     @dp.errors()
     async def global_error_handler(event, Exception):
         logging.critical(f"Critical error caught globally: {Exception}")
         
     await bot.delete_webhook(drop_pending_updates=True)
     
-    # Polling loop wrapped in Try-Except
     try:
         await dp.start_polling(bot, polling_timeout=30)
     except Exception as e:
