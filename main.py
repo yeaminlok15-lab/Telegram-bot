@@ -12,8 +12,8 @@ import aiosqlite
 # ━━━━━━━━━━━━━━━━━━━━
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━
-TOKEN = "8781653487:AAHyw27t9YlxpEV-_GqYGw9EhRIenqlUadM"  # আপনার বটের টোকেন দিন
-ADMIN_ID = 8179643564  # আপনার টেলিগ্রাম আইডি দিন
+TOKEN = "8781653487:AAEjXB3h-L4ecLaplsgdGWTsnG4MRn0dos8"  # আপনার বটের টোকেন দিন
+ADMIN_ID = 8781653487  # আপনার টেলিগ্রাম আইডি দিন
 DB_NAME = "premium_saas.db"
 
 # ━━━━━━━━━━━━━━━━━━━━
