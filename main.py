@@ -12,8 +12,8 @@ import aiosqlite
 # ━━━━━━━━━━━━━━━━━━━━
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━
-TOKEN = "8781653487:AAGiWE1CLZxAb8fJzTq28f3fMphds25qPKI"  # এখানে আপনার বটের টোকেন দিন
-ADMIN_ID = 8179643564  # এখানে আপনার টেলিগ্রাম আইডি দিন (যেমন: 8179643564)
+TOKEN = "8781653487:AAHyw27t9YlxpEV-_GqYGw9EhRIenqlUadM"  # আপনার বটের টোকেন
+ADMIN_ID = 8179643564  # আপনার টেলিগ্রাম আইডি
 DB_NAME = "premium_saas.db"
 
 # ━━━━━━━━━━━━━━━━━━━━
@@ -26,72 +26,83 @@ class AdminState(StatesGroup):
     waiting_for_pkg_name = State()
     waiting_for_pkg_price = State()
     waiting_for_hidden_key = State() 
-    
     waiting_for_stock_data = State() 
-    
     waiting_for_redeem_code = State()
     waiting_for_redeem_amount = State()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# DATABASE MODULE
+# CRASH-PROOF DATABASE MODULE
 # ━━━━━━━━━━━━━━━━━━━━
 async def init_db():
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        await db.execute('PRAGMA journal_mode=WAL;')
-        await db.execute('PRAGMA synchronous=NORMAL;')
-        await db.executescript('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0, ref_by INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS packages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                name TEXT, 
-                duration TEXT, 
-                points INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS stock (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                package_id INTEGER,
-                data TEXT
-            );
-            CREATE TABLE IF NOT EXISTS redeem_codes (
-                code TEXT PRIMARY KEY, amount INTEGER, is_used INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, package_name TEXT, status TEXT
-            );
-        ''')
-        await db.commit()
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            await db.execute('PRAGMA journal_mode=WAL;')
+            await db.execute('PRAGMA synchronous=NORMAL;')
+            await db.executescript('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0, ref_by INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS packages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    name TEXT, 
+                    duration TEXT, 
+                    points INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS stock (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    package_id INTEGER,
+                    data TEXT
+                );
+                CREATE TABLE IF NOT EXISTS redeem_codes (
+                    code TEXT PRIMARY KEY, amount INTEGER, is_used INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, package_name TEXT, status TEXT
+                );
+            ''')
+            await db.commit()
+    except Exception as e:
+        logging.error(f"Database Init Error: {e}")
 
 async def get_user(user_id):
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            return await cursor.fetchone()
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+                return await cursor.fetchone()
+    except Exception as e:
+        logging.error(f"Get User Error: {e}")
+        return None
 
 async def add_user(user_id, ref_by=None):
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            if await cursor.fetchone(): 
-                return False  # Old user
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
+                if await cursor.fetchone(): 
+                    return False  
 
-        await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
-        
-        if ref_by and str(ref_by) != str(user_id):
-            await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
-            
-        await db.commit()
-        return True
+            await db.execute("INSERT INTO users (user_id, ref_by) VALUES (?, ?)", (user_id, ref_by))
+            if ref_by and str(ref_by) != str(user_id):
+                await db.execute("UPDATE users SET points = points + 5 WHERE user_id = ?", (ref_by,))
+            await db.commit()
+            return True
+    except Exception as e:
+        logging.error(f"Add User Error: {e}")
+        return False
 
 async def get_packages_with_stock():
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        query = '''
-            SELECT p.id, p.name, p.points, COUNT(s.id) as stock_count
-            FROM packages p
-            LEFT JOIN stock s ON p.id = s.package_id
-            GROUP BY p.id
-        '''
-        async with db.execute(query) as cursor:
-            return await cursor.fetchall()
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            query = '''
+                SELECT p.id, p.name, p.points, COUNT(s.id) as stock_count
+                FROM packages p
+                LEFT JOIN stock s ON p.id = s.package_id
+                GROUP BY p.id
+            '''
+            async with db.execute(query) as cursor:
+                return await cursor.fetchall()
+    except Exception as e:
+        logging.error(f"Get Packages Error: {e}")
+        return []
 
 # ━━━━━━━━━━━━━━━━━━━━
 # KEYBOARDS
@@ -106,7 +117,7 @@ def main_menu_kb(is_admin=False):
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def cancel_kb():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⬅️ Back to Main Menu")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔙 Back to Home")]], resize_keyboard=True)
 
 def admin_panel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -128,33 +139,38 @@ user_router = Router()
 admin_router = Router()
 
 # ━━━━━━━━━━━━━━━━━━━━
+# GLOBAL BACK HANDLER
+# ━━━━━━━━━━━━━━━━━━━━
+@user_router.message(F.text == "🔙 Back to Home")
+async def back_to_main(message: Message, state: FSMContext):
+    await state.clear() 
+    is_admin = message.from_user.id == ADMIN_ID
+    await message.answer("🏠 *Main Menu*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below:", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+
+# ━━━━━━━━━━━━━━━━━━━━
 # USER HANDLERS
 # ━━━━━━━━━━━━━━━━━━━━
 @user_router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot, command: CommandObject):
-    await state.clear()
-    
-    ref_by = None
-    if command.args and command.args.isdigit():
-        ref_by = int(command.args)
-    
-    is_new_user = await add_user(message.from_user.id, ref_by)
-    
-    if is_new_user and ref_by and str(ref_by) != str(message.from_user.id):
-        try: 
-            await bot.send_message(chat_id=ref_by, text="🎉 *New Referral!*\nSomeone joined using your link. You earned *+5 Tokens!*", parse_mode="Markdown")
-        except Exception: 
-            pass 
+    try:
+        await state.clear()
+        ref_by = None
+        if command.args and command.args.isdigit():
+            ref_by = int(command.args)
+        
+        is_new_user = await add_user(message.from_user.id, ref_by)
+        
+        if is_new_user and ref_by and str(ref_by) != str(message.from_user.id):
+            try: 
+                await bot.send_message(chat_id=ref_by, text="🎉 *New Referral!*\nSomeone joined using your link. You earned *+5 Tokens!*", parse_mode="Markdown")
+            except Exception: 
+                pass # যদি রেফারের ইউজার বট ব্লক করে দেয়, তবুও ক্র্যাশ করবে না
 
-    is_admin = message.from_user.id == ADMIN_ID
-    text = "🟢 *Welcome to Premium SaaS*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below to begin."
-    await message.answer(text, reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
-
-@user_router.message(F.text == "⬅️ Back to Main Menu")
-async def back_to_main(message: Message, state: FSMContext):
-    await state.clear()
-    is_admin = message.from_user.id == ADMIN_ID
-    await message.answer("🟢 *Main Menu*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+        is_admin = message.from_user.id == ADMIN_ID
+        text = "🟢 *Welcome to Premium SaaS*\n━━━━━━━━━━━━━━━━━━━━\nSelect an option below to begin."
+        await message.answer(text, reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Start CMD Error: {e}")
 
 @user_router.message(F.text == "👤 Profile")
 async def show_profile(message: Message):
@@ -196,43 +212,47 @@ async def out_of_stock_alert(call: CallbackQuery):
 
 @user_router.callback_query(F.data.startswith("buy_pkg_"))
 async def process_purchase(call: CallbackQuery):
-    pkg_id = int(call.data.split("_")[2])
-    user_id = call.from_user.id
-    
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        async with db.execute("SELECT name, points FROM packages WHERE id = ?", (pkg_id,)) as cursor:
-            pkg = await cursor.fetchone()
-        if not pkg: return
-        pkg_name, price = pkg
+    try:
+        pkg_id = int(call.data.split("_")[2])
+        user_id = call.from_user.id
         
-        async with db.execute("SELECT id, data FROM stock WHERE package_id = ? LIMIT 1", (pkg_id,)) as cursor:
-            stock_item = await cursor.fetchone()
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            async with db.execute("SELECT name, points FROM packages WHERE id = ?", (pkg_id,)) as cursor:
+                pkg = await cursor.fetchone()
+            if not pkg: return
+            pkg_name, price = pkg
             
-        if not stock_item:
-            return await call.answer("🔴 Out of stock! Someone might have just bought the last one.", show_alert=True)
+            async with db.execute("SELECT id, data FROM stock WHERE package_id = ? LIMIT 1", (pkg_id,)) as cursor:
+                stock_item = await cursor.fetchone()
+                
+            if not stock_item:
+                return await call.answer("🔴 Out of stock! Someone might have just bought the last one.", show_alert=True)
+                
+            stock_id, hidden_key = stock_item
             
-        stock_id, hidden_key = stock_item
-        
-        async with db.execute("SELECT points FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            user = await cursor.fetchone()
-        balance = user[0] if user else 0
-        
-        if balance >= price:
-            await db.execute("UPDATE users SET points = points - ? WHERE user_id = ?", (price, user_id))
-            await db.execute("DELETE FROM stock WHERE id = ?", (stock_id,)) 
-            await db.execute("INSERT INTO orders (user_id, package_name, status) VALUES (?, ?, ?)", (user_id, pkg_name, "Completed"))
-            await db.commit()
+            async with db.execute("SELECT points FROM users WHERE user_id = ?", (user_id,)) as cursor:
+                user = await cursor.fetchone()
+            balance = user[0] if user else 0
             
-            success_msg = (
-                f"✅ *Purchase Successful!*\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 Package: {pkg_name}\n💰 Paid: {price} Tokens\n\n"
-                f"🎁 *Your Hidden Key / Item:*\n`{hidden_key}`\n\n"
-                f"_(This item has been removed from our stock for your security)_"
-            )
-            await call.message.answer(success_msg, parse_mode="Markdown")
-            await call.answer("✅ Success! Check your messages.", show_alert=False)
-        else:
-            await call.answer("🔴 You don't have enough tokens to buy this package!", show_alert=True)
+            if balance >= price:
+                await db.execute("UPDATE users SET points = points - ? WHERE user_id = ?", (price, user_id))
+                await db.execute("DELETE FROM stock WHERE id = ?", (stock_id,)) 
+                await db.execute("INSERT INTO orders (user_id, package_name, status) VALUES (?, ?, ?)", (user_id, pkg_name, "Completed"))
+                await db.commit()
+                
+                success_msg = (
+                    f"✅ *Purchase Successful!*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📦 Package: {pkg_name}\n💰 Paid: {price} Tokens\n\n"
+                    f"🎁 *Your Hidden Key / Item:*\n`{hidden_key}`\n\n"
+                    f"_(This item has been removed from our stock for your security)_"
+                )
+                await call.message.answer(success_msg, parse_mode="Markdown")
+                await call.answer("✅ Success! Check your messages.", show_alert=False)
+            else:
+                await call.answer("🔴 You don't have enough tokens to buy this package!", show_alert=True)
+    except Exception as e:
+        logging.error(f"Purchase Error: {e}")
+        await call.answer("⚠️ Processing Error. Try again.", show_alert=True)
 
 @user_router.message(F.text == "👥 Referral")
 async def show_referral(message: Message, bot: Bot):
@@ -265,22 +285,28 @@ async def start_redeem(message: Message, state: FSMContext):
 
 @user_router.message(RedeemState.waiting_for_code)
 async def process_redeem(message: Message, state: FSMContext):
-    code = message.text.strip()
-    is_admin = message.from_user.id == ADMIN_ID
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        async with db.execute("SELECT amount, is_used FROM redeem_codes WHERE code = ?", (code,)) as cursor:
-            res = await cursor.fetchone()
-            if not res: await message.answer("🔴 *Invalid code.*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
-            elif res[1] == 1: await message.answer("🟡 *This code has already been used.*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
-            else:
-                await db.execute("UPDATE redeem_codes SET is_used = 1 WHERE code = ?", (code,))
-                await db.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (res[0], message.from_user.id))
-                await db.commit()
-                await message.answer(f"🟢 *Success!* Added *{res[0]} Tokens*.", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
-    await state.clear()
+    try:
+        code = message.text.strip()
+        is_admin = message.from_user.id == ADMIN_ID
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            async with db.execute("SELECT amount, is_used FROM redeem_codes WHERE code = ?", (code,)) as cursor:
+                res = await cursor.fetchone()
+                if not res: 
+                    await message.answer("🔴 *Invalid code.*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+                elif res[1] == 1: 
+                    await message.answer("🟡 *This code has already been used.*", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+                else:
+                    await db.execute("UPDATE redeem_codes SET is_used = 1 WHERE code = ?", (code,))
+                    await db.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (res[0], message.from_user.id))
+                    await db.commit()
+                    await message.answer(f"🟢 *Success!* Added *{res[0]} Tokens*.", reply_markup=main_menu_kb(is_admin), parse_mode="Markdown")
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Redeem Error: {e}")
+        await state.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# ADMIN HANDLERS
+# ADMIN HANDLERS (CRASH-PROOF)
 # ━━━━━━━━━━━━━━━━━━━━
 @admin_router.message(F.text == "🛠 Admin Panel")
 async def admin_panel(message: Message):
@@ -290,18 +316,20 @@ async def admin_panel(message: Message):
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        async with db.execute("SELECT COUNT(*) FROM users") as c: users = (await c.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM orders") as c: orders = (await c.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM stock") as c: stocks = (await c.fetchone())[0]
-    await call.message.edit_text(f"📊 *System Stats*\n━━━━━━━━━━━━━━━━━━━━\n👥 Total Users: {users}\n📦 Total Orders: {orders}\n📥 Unsold Stock: {stocks}", parse_mode="Markdown")
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            async with db.execute("SELECT COUNT(*) FROM users") as c: users = (await c.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM orders") as c: orders = (await c.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM stock") as c: stocks = (await c.fetchone())[0]
+        await call.message.edit_text(f"📊 *System Stats*\n━━━━━━━━━━━━━━━━━━━━\n👥 Total Users: {users}\n📦 Total Orders: {orders}\n📥 Unsold Stock: {stocks}", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Stats Error: {e}")
 
 @admin_router.callback_query(F.data == "admin_cancel_fsm")
 async def admin_cancel_action(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("🟢 *Action cancelled.*", parse_mode="Markdown")
 
-# --- COMBINED ADD PACKAGE & STOCK FLOW ---
 @admin_router.callback_query(F.data == "admin_add_pkg")
 async def admin_add_pkg(call: CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID: return
@@ -316,29 +344,35 @@ async def admin_pkg_name(message: Message, state: FSMContext):
 
 @admin_router.message(AdminState.waiting_for_pkg_price)
 async def admin_pkg_price(message: Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("🔴 Numbers only.")
+    if not message.text.isdigit(): return await message.answer("🔴 Numbers only. Please try again.")
     await state.update_data(price=int(message.text))
     await state.set_state(AdminState.waiting_for_hidden_key)
-    await message.answer("📝 *Enter the Hidden Key / Extension for this package:*", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    await message.answer("📝 *Enter the Hidden Keys / Extensions:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
 
 @admin_router.message(AdminState.waiting_for_hidden_key)
 async def admin_hidden_key(message: Message, state: FSMContext):
-    data = await state.get_data()
-    name = data['name']
-    price = data['price']
-    hidden_key = message.text
-    
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        cursor = await db.execute("INSERT INTO packages (name, duration, points) VALUES (?, ?, ?)", (name, "N/A", price))
-        pkg_id = cursor.lastrowid
+    try:
+        data = await state.get_data()
+        name = data.get('name', 'Unknown')
+        price = data.get('price', 0)
         
-        await db.execute("INSERT INTO stock (package_id, data) VALUES (?, ?)", (pkg_id, hidden_key))
-        await db.commit()
+        hidden_keys = [key.strip() for key in message.text.split('\n') if key.strip()]
         
-    await state.clear()
-    await message.answer(f"🟢 *Package Created & Stock Added!*\n\n📦 Name: {name}\n💰 Price: {price}\n✅ Hidden Key is active and ready to be sold.", parse_mode="Markdown")
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            cursor = await db.execute("INSERT INTO packages (name, duration, points) VALUES (?, ?, ?)", (name, "N/A", price))
+            pkg_id = cursor.lastrowid
+            
+            for key in hidden_keys:
+                await db.execute("INSERT INTO stock (package_id, data) VALUES (?, ?)", (pkg_id, key))
+            await db.commit()
+            
+        await state.clear()
+        await message.answer(f"🟢 *Package Created & Stock Added!*\n\n📦 Name: {name}\n💰 Price: {price}\n✅ {len(hidden_keys)} Hidden Key(s) added successfully.", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Add Package Error: {e}")
+        await state.clear()
+        await message.answer("🔴 Server Error while saving package.")
 
-# --- ADD MORE STOCK TO EXISTING PACKAGE ---
 @admin_router.callback_query(F.data == "admin_select_pkg_stock")
 async def admin_select_stock(call: CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID: return
@@ -353,22 +387,33 @@ async def admin_select_stock(call: CallbackQuery, state: FSMContext):
 
 @admin_router.callback_query(F.data.startswith("addstock_"))
 async def admin_add_stock_step2(call: CallbackQuery, state: FSMContext):
-    pkg_id = int(call.data.split("_")[1])
-    await state.update_data(stock_pkg_id=pkg_id)
-    await state.set_state(AdminState.waiting_for_stock_data)
-    await call.message.edit_text("📝 *Send the Hidden Key / Extension for this stock:*", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    try:
+        pkg_id = int(call.data.split("_")[1])
+        await state.update_data(stock_pkg_id=pkg_id)
+        await state.set_state(AdminState.waiting_for_stock_data)
+        await call.message.edit_text("📝 *Send the Hidden Keys / Extensions for this stock:*\n_(Send multiple keys separated by entering a new line / pressing Enter)_", reply_markup=cancel_admin_inline(), parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Add Stock Step 2 Error: {e}")
 
 @admin_router.message(AdminState.waiting_for_stock_data)
 async def admin_save_stock(message: Message, state: FSMContext):
-    data = await state.get_data()
-    pkg_id = data['stock_pkg_id']
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        await db.execute("INSERT INTO stock (package_id, data) VALUES (?, ?)", (pkg_id, message.text))
-        await db.commit()
-    await state.clear()
-    await message.answer("🟢 *Extra Stock added successfully!*", parse_mode="Markdown")
+    try:
+        data = await state.get_data()
+        pkg_id = data.get('stock_pkg_id')
+        
+        hidden_keys = [key.strip() for key in message.text.split('\n') if key.strip()]
+        
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            for key in hidden_keys:
+                await db.execute("INSERT INTO stock (package_id, data) VALUES (?, ?)", (pkg_id, key))
+            await db.commit()
+            
+        await state.clear()
+        await message.answer(f"🟢 *{len(hidden_keys)} Extra Stock(s) added successfully!*", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Save Stock Error: {e}")
+        await state.clear()
 
-# --- ADD REDEEM CODE ---
 @admin_router.callback_query(F.data == "admin_add_code")
 async def admin_add_code(call: CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID: return
@@ -383,30 +428,37 @@ async def admin_code_name(message: Message, state: FSMContext):
 
 @admin_router.message(AdminState.waiting_for_redeem_amount)
 async def admin_code_amt(message: Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("🔴 Numbers only.")
-    data = await state.get_data()
-    async with aiosqlite.connect(DB_NAME, timeout=20) as db:
-        await db.execute("INSERT INTO redeem_codes (code, amount, is_used) VALUES (?, ?, 0)", (data['code'], int(message.text)))
-        await db.commit()
-    await state.clear()
-    await message.answer(f"🟢 *Code created!*\n🎁 `{data['code']}` = {message.text} Tokens", parse_mode="Markdown")
+    if not message.text.isdigit(): return await message.answer("🔴 Numbers only. Try again.")
+    try:
+        data = await state.get_data()
+        async with aiosqlite.connect(DB_NAME, timeout=20) as db:
+            await db.execute("INSERT INTO redeem_codes (code, amount, is_used) VALUES (?, ?, 0)", (data['code'], int(message.text)))
+            await db.commit()
+        await state.clear()
+        await message.answer(f"🟢 *Code created!*\n🎁 `{data['code']}` = {message.text} Tokens", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Create Code Error: {e}")
+        await state.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━
-# DUMMY WEB SERVER (FOR RENDER)
+# DUMMY WEB SERVER (FOR RENDER TO NOT CRASH/SLEEP)
 # ━━━━━━━━━━━━━━━━━━━━
 async def handle(request):
-    return web.Response(text="Bot is running perfectly on Render!")
+    return web.Response(text="Bot is running perfectly without crashing!")
 
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logging.info(f"Dummy Web Server started on port {port}")
+    try:
+        app = web.Application()
+        app.router.add_get('/', handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        port = int(os.environ.get("PORT", 8080))
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        logging.info(f"Crash-proof Web Server started on port {port}")
+    except Exception as e:
+        logging.error(f"Web Server Error: {e}")
 
 # ━━━━━━━━━━━━━━━━━━━━
 # MAIN
@@ -423,9 +475,23 @@ async def main():
     dp.include_router(user_router)
     dp.include_router(admin_router)
     
+    # Handle all unhandled exceptions globally to prevent crash
+    @dp.errors()
+    async def global_error_handler(event, Exception):
+        logging.critical(f"Critical error caught globally: {Exception}")
+        
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot, polling_timeout=30)
+    
+    # Polling loop wrapped in Try-Except
+    try:
+        await dp.start_polling(bot, polling_timeout=30)
+    except Exception as e:
+        logging.critical(f"Polling Crashed: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
-                      
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
+    except Exception as e:
+        print(f"Fatal System Error: {e}")
